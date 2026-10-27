@@ -36,7 +36,20 @@ _FIN_DE_REUNION = re.compile(
     r"a mis fin à la réunion|avez été retiré)",
     re.I,
 )
-_SALLE_ATTENTE = re.compile(r"(waiting room|host will let you in|salle d.attente|l.hôte va vous admettre)", re.I)
+_SALLE_ATTENTE = re.compile(r"(waiting room|host will let you in|salle d.attente|l.hôte va vous admettre|has not started|waiting for the host to start|pas encore commencé)", re.I)
+_BOUTON_COOKIES = re.compile(r"^(Accept|Accepter)( all| tout| tous)?( cookies| les cookies)?$", re.I)
+_LIEN_NAVIGATEUR = re.compile(r"(Join from (your|this) browser|depuis (votre|ce) navigateur)", re.I)
+_BLOCAGES = [
+    (re.compile(r"(sign in to join|only (authenticated|signed.in) users|connectez-vous pour rejoindre|utilisateurs authentifiés)", re.I),
+     "Cette réunion n'accepte que les utilisateurs connectés à un compte Zoom. Dans les paramètres de la réunion, "
+     "désactivez « Seuls les utilisateurs authentifiés peuvent rejoindre »."),
+    (re.compile(r"(captcha|i.m not a robot|je ne suis pas un robot|verify you are human)", re.I),
+     "Zoom demande une vérification « Je ne suis pas un robot » : réessayez dans quelques minutes."),
+    (re.compile(r"(invalid meeting id|meeting id is not valid|numéro de réunion (non valide|invalide)|does not exist)", re.I),
+     "Numéro de réunion invalide : vérifiez le lien Zoom."),
+    (re.compile(r"(wrong passcode|incorrect passcode|code secret (incorrect|erroné))", re.I),
+     "Code secret incorrect : utilisez le lien d'invitation complet (avec ?pwd=…) ou l'option --code."),
+]
 
 
 @dataclass
@@ -131,8 +144,24 @@ def _dans_la_reunion(page) -> bool:
     return any(cadre.get_by_role("button", name=_BOUTON_QUITTER).count() for cadre in page.frames)
 
 
-def _rejoindre(page, reunion: Reunion, nom: str, attente_max_s: int) -> None:
+def _photo(page, capture: Optional[Path]) -> None:
+    """Enregistre ce que voit le robot, pour comprendre un éventuel blocage."""
+    if capture:
+        try:
+            page.screenshot(path=str(capture))
+        except Exception:
+            pass
+
+
+def _rejoindre(page, reunion: Reunion, nom: str, attente_max_s: int, capture: Optional[Path] = None) -> None:
+    log.info("Étape 1/4 : ouverture de la réunion %s dans le navigateur…", reunion.numero)
     page.goto(reunion.url_client_web(nom), wait_until="domcontentloaded")
+    _cliquer(page, _BOUTON_COOKIES, 3000)
+    # Page d'accueil « Lancer la réunion » : on choisit le navigateur plutôt que l'application.
+    if not _cliquer(page, _LIEN_NAVIGATEUR, 3000):
+        lien = page.get_by_role("link", name=_LIEN_NAVIGATEUR)
+        if lien.count():
+            lien.first.click()
     # Le nouveau client web s'affiche dans un iframe plein écran : on l'ouvre directement.
     iframe = page.locator("iframe#webclient")
     try:
@@ -142,13 +171,16 @@ def _rejoindre(page, reunion: Reunion, nom: str, attente_max_s: int) -> None:
             page.goto(urljoin(page.url, source), wait_until="domcontentloaded")
     except Exception:
         pass
+    _photo(page, capture)
 
+    log.info("Étape 2/4 : saisie du nom « %s »…", nom)
     champ_nom = page.locator("#input-for-name")
     try:
         champ_nom.wait_for(timeout=20000)
         champ_nom.fill(nom)
     except Exception:
         log.info("Champ du nom introuvable, le nom passé dans le lien sera utilisé.")
+    _verifier_blocage(page, capture)
     if reunion.code:
         champ_code = page.locator("#input-for-pwd")
         if champ_code.count():
@@ -160,27 +192,44 @@ def _rejoindre(page, reunion: Reunion, nom: str, attente_max_s: int) -> None:
         if bouton.count() and bouton.get_attribute("aria-label") != coupe:
             bouton.click()
 
+    log.info("Étape 3/4 : clic sur « Rejoindre »…")
     bouton_rejoindre = page.locator(".preview-join-button")
     if bouton_rejoindre.count():
         bouton_rejoindre.first.click()
     elif not _cliquer(page, _BOUTON_REJOINDRE, 5000):
+        _photo(page, capture)
         raise RuntimeError("Bouton « Rejoindre » introuvable : la page Zoom a peut-être changé.")
 
-    log.info("Demande d'accès envoyée, en attente d'admission…")
+    log.info("Étape 4/4 : demande d'accès envoyée, en attente d'admission…")
     limite = time.monotonic() + attente_max_s
     signale_attente = False
+    prochaine_photo = 0.0
     while not _dans_la_reunion(page):
         texte = _texte_visible(page)
         if _FIN_DE_REUNION.search(texte):
             raise RuntimeError("La réunion est terminée ou l'accès a été refusé.")
+        _verifier_blocage(page, capture, texte)
         if _SALLE_ATTENTE.search(texte) and not signale_attente:
-            log.info("Le robot est en salle d'attente : l'hôte doit l'admettre.")
+            log.info("Le robot est en salle d'attente : l'hôte doit l'admettre (Participants > Admettre).")
             signale_attente = True
         if time.monotonic() > limite:
             raise RuntimeError("Le robot n'a pas été admis dans la réunion à temps.")
+        if time.monotonic() > prochaine_photo:
+            _photo(page, capture)
+            prochaine_photo = time.monotonic() + 10
         time.sleep(3)
     log.info("Robot entré dans la réunion.")
     _cliquer(page, _BOUTON_AUDIO_ORDINATEUR, 5000)
+    _photo(page, capture)
+
+
+def _verifier_blocage(page, capture: Optional[Path], texte: Optional[str] = None) -> None:
+    """Arrête tout de suite, avec une explication, quand Zoom refuse l'accès au robot."""
+    texte = texte if texte is not None else _texte_visible(page)
+    for motif, explication in _BLOCAGES:
+        if motif.search(texte):
+            _photo(page, capture)
+            raise RuntimeError(explication)
 
 
 def _annoncer(page, message: str) -> None:
@@ -229,6 +278,7 @@ def enregistrer_reunion(
 ) -> Path:
     from playwright.sync_api import sync_playwright
 
+    fichier_audio.parent.mkdir(parents=True, exist_ok=True)
     enregistreur = EnregistreurAudio(fichier_audio)
     enregistreur.preparer()
     environnement = {**os.environ, "PULSE_SINK": PUITS_AUDIO, "PULSE_SOURCE": f"{MICRO_MUET}.monitor"}
@@ -242,14 +292,15 @@ def enregistrer_reunion(
                                           viewport={"width": 1280, "height": 800})
         page = contexte.new_page()
         try:
-            _rejoindre(page, reunion, nom, attente_max_s)
+            _rejoindre(page, reunion, nom, attente_max_s, fichier_audio.with_suffix(".robot.png"))
             enregistreur.demarrer()
             log.info("Enregistrement en cours → %s", fichier_audio)
             if annonce:
                 _annoncer(page, annonce)
             _attendre_la_fin(page, duree_max_s)
         except Exception:
-            page.screenshot(path=str(fichier_audio.with_suffix(".erreur.png")))
+            _photo(page, fichier_audio.with_suffix(".erreur.png"))
+            log.info("Capture de ce que voyait le robot : %s", fichier_audio.with_suffix(".erreur.png"))
             raise
         finally:
             enregistreur.arreter()
@@ -327,7 +378,7 @@ def main() -> None:
         audio = enregistrer_reunion(reunion, base.with_suffix(".mp3"), args.nom,
                                     args.attente_max * 60, args.duree_max * 60, annonce)
     except RuntimeError as erreur:
-        sys.exit(f"Échec : {erreur}")
+        sys.exit(f"Échec : {erreur}\nCe que voyait le robot : {base.with_suffix('.erreur.png')}")
     fin = datetime.now()
 
     log.info("Transcription de l'enregistrement…")

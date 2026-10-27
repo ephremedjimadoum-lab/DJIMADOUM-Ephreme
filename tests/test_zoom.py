@@ -65,3 +65,20 @@ def test_parcours_robot_sur_fausse_page_zoom():
         _attendre_la_fin(page, duree_max_s=30)
         assert "ended by host" in page.inner_text("body")
         navigateur.close()
+
+
+def test_reunion_reservee_aux_comptes_zoom(tmp_path):
+    sync_api = pytest.importorskip("playwright.sync_api")
+    with sync_api.sync_playwright() as p:
+        try:
+            navigateur = p.chromium.launch()
+        except Exception as erreur:
+            pytest.skip(f"Chromium indisponible : {erreur}")
+        page = navigateur.new_page()
+        page.route("https://app.zoom.us/**", lambda route: route.fulfill(
+            content_type="text/html", body="<p>This meeting is for authorized attendees only. Sign in to join.</p>"))
+        capture = tmp_path / "robot.png"
+        with pytest.raises(RuntimeError, match="utilisateurs connectés"):
+            _rejoindre(page, analyser_lien("85512345678"), "Assistant CR", attente_max_s=30, capture=capture)
+        assert capture.exists()
+        navigateur.close()
