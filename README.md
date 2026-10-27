@@ -70,6 +70,11 @@ Le robot rejoint la réunion Zoom comme un participant (« Assistant compte rend
 
 #### Lancer le robot avec Docker (Windows, Mac, Linux)
 
+**Le plus simple :** installez Docker Desktop, copiez `config.env.exemple` en `config.env` et mettez-y votre clé API. Ensuite, double-cliquez sur `lancer_robot.bat` (Windows), ou lancez `./lancer_robot.sh` (Mac, Linux), puis collez le lien de la réunion. Le premier lancement installe le robot automatiquement.
+
+Ou, en ligne de commande :
+
+
 1. Installez [Docker Desktop](https://www.docker.com/products/docker-desktop/) (gratuit).
 2. Dans ce dossier, construisez l'image une seule fois :
 

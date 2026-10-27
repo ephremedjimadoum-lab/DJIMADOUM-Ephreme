@@ -4,3 +4,4 @@ __pycache__/
 comptes_rendus/
 .env
 modeles/
+config.env
