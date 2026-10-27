@@ -89,7 +89,7 @@ def _lire_json(texte: str) -> str:
     return "\n".join(lignes)
 
 
-def transcrire_audio(chemin: Path, langue: str = "fr") -> str:
+def transcrire_audio(chemin: Path, langue: str = "fr", modele: str = "medium") -> str:
     """Transcrit un enregistrement en local avec faster-whisper (dépendance optionnelle)."""
     try:
         from faster_whisper import WhisperModel
@@ -100,8 +100,7 @@ def transcrire_audio(chemin: Path, langue: str = "fr") -> str:
             "ou fournissez directement la transcription exportée par Teams, Zoom ou Meet (.vtt, .docx, .txt)."
         ) from erreur
 
-    modele = WhisperModel("medium", device="auto", compute_type="auto")
-    segments, _ = modele.transcribe(str(chemin), language=langue, vad_filter=True)
+    segments, _ = WhisperModel(modele, device="auto", compute_type="auto").transcribe(str(chemin), language=langue, vad_filter=True)
     lignes = []
     for segment in segments:
         secondes = int(segment.start)

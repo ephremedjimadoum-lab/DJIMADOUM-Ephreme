@@ -3,3 +3,4 @@ __pycache__/
 .pytest_cache/
 comptes_rendus/
 .env
+modeles/

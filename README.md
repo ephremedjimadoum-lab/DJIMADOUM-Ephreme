@@ -14,6 +14,8 @@ A data analysis project for extracting insights and supporting data-driven decis
 - **Plan d'action** : tâche, responsable, échéance, priorité
 - **Questions en suspens** et **prochaine réunion**
 
+Deux façons de l'utiliser : **le robot Zoom** rejoint lui-même la réunion et l'enregistre, ou vous **fournissez la transcription** après la réunion.
+
 Sorties : Word (`.docx`), Markdown (`.md`) et, si besoin, JSON (`.json`) pour l'intégrer à d'autres outils.
 
 ### Installation
@@ -59,6 +61,69 @@ Les fichiers sont enregistrés dans `comptes_rendus/` sous la forme `AAAA-MM-JJ_
 | `--formats` | `md`, `docx`, `json` (défaut : `md,docx`) |
 | `--effort` | Profondeur d'analyse : `low` (rapide) à `max` (le plus soigné). Défaut : `high` |
 | `--langue` | Langue parlée, pour la transcription audio (défaut : `fr`) |
+
+### Robot Zoom : l'agent participe à la réunion
+
+Le robot rejoint la réunion Zoom comme un participant (« Assistant compte rendu (enregistrement) »). Il coupe son micro et sa caméra et annonce l'enregistrement dans la discussion. Il enregistre ensuite le son jusqu'à la fin de la réunion, transcrit l'enregistrement sur votre ordinateur, rédige le compte rendu Word et peut l'envoyer par e-mail.
+
+**Gratuit** : le robot utilise le client web de Zoom avec un simple compte gratuit, sans abonnement ni service payant. La transcription (Whisper) tourne sur votre machine. Seule la rédaction par Claude est facturée à l'usage, soit environ 0,10 à 0,30 $ pour une réunion d'une heure.
+
+#### Lancer le robot avec Docker (Windows, Mac, Linux)
+
+1. Installez [Docker Desktop](https://www.docker.com/products/docker-desktop/) (gratuit).
+2. Dans ce dossier, construisez l'image une seule fois :
+
+```bash
+docker build -t robot-zoom .
+```
+
+3. Au début de la réunion (ou quelques minutes avant), lancez :
+
+```bash
+docker run --rm -e ANTHROPIC_API_KEY="votre-clé" \
+  -v "$PWD/comptes_rendus:/app/comptes_rendus" -v "$PWD/modeles:/app/modeles" \
+  robot-zoom "https://us02web.zoom.us/j/85512345678?pwd=AbC123" \
+  --titre "Comité de pilotage" --participants "Awa (DG), Paul (DSI)"
+```
+
+4. **Si vous êtes l'hôte, admettez le robot depuis la salle d'attente.** Le robot quitte la réunion tout seul quand elle se termine. Le compte rendu arrive dans `comptes_rendus/`, avec l'enregistrement `.mp3` et la transcription `.txt`.
+
+#### Recevoir le compte rendu par e-mail (gratuit avec Gmail)
+
+Créez un [mot de passe d'application Gmail](https://myaccount.google.com/apppasswords), puis ajoutez à la commande `docker run` :
+
+```bash
+  -e SMTP_UTILISATEUR="vous@gmail.com" -e SMTP_MOT_DE_PASSE="mot-de-passe-d-application" \
+  ... --envoyer-a "vous@gmail.com,collegue@exemple.com"
+```
+
+#### Options du robot
+
+| Option | Rôle |
+|---|---|
+| `--code` | Code secret, s'il n'est pas dans le lien |
+| `--nom` | Nom affiché du robot dans la réunion |
+| `--attente-max` | Minutes d'attente en salle d'attente avant abandon (défaut : 15) |
+| `--duree-max` | Durée maximale d'enregistrement en minutes (défaut : 180) |
+| `--modele-whisper` | Qualité de transcription : `small` (défaut), `medium` ou `large-v3`, plus précis mais plus lent |
+| `--sans-annonce` | Ne pas écrire le message d'annonce dans la discussion |
+| `--envoyer-a` | Destinataires du compte rendu |
+
+#### Lancer le robot sans Docker (Linux)
+
+```bash
+sudo apt install pulseaudio ffmpeg xvfb
+pip install -r requirements.txt faster-whisper playwright && playwright install chromium
+pulseaudio --start
+xvfb-run -a python -m agent_compte_rendu.zoom "LIEN_ZOOM"
+```
+
+#### Bon à savoir
+
+- **Consentement** : le robot porte un nom explicite et annonce l'enregistrement dans la discussion. Prévenez quand même les participants à l'oral : l'enregistrement sans consentement est interdit dans de nombreux pays.
+- Si l'organisateur a activé la salle d'attente ou réservé la réunion aux utilisateurs connectés, le robot doit être admis, sinon il ne peut pas entrer.
+- Le robot pilote l'interface web de Zoom. Si Zoom la modifie, il peut cesser de fonctionner. En cas d'échec, une capture d'écran `*.erreur.png` est enregistrée dans `comptes_rendus/` pour comprendre ce qui s'est passé.
+- L'ordinateur qui lance le robot doit rester allumé pendant toute la réunion.
 
 ### Formats acceptés
 

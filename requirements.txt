@@ -1,5 +1,6 @@
 anthropic>=2.3.0
 pydantic>=2.0
 python-docx>=1.1
-# Optionnel, pour transcrire directement un enregistrement audio/vidéo :
+# Pour le robot Zoom et la transcription des enregistrements :
 # faster-whisper>=1.0
+# playwright>=1.55
